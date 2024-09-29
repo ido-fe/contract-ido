@@ -7,9 +7,9 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "./ERC20TokenWrapped.sol";
 import "./interface/IToken.sol";
-import "./interface/IUniswap.sol";
 
 contract TGPool is Ownable, Pausable, ReentrancyGuard {
     // IDO Token A :MNT
@@ -17,7 +17,9 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
     // 1MNT = 200000 TokenB
     uint256 public idoTokenAPrice;
     // IDO Token A hardcore 50000 MNT
-    uint256 public idoTokenAAmount;
+    uint256 public idoTokenAMaxAmount;
+    // IDO Token A lower limit 1000 MNT
+    uint256 public idoTokenAMinAmount;
     // realAMount IDO 30000 MNT
     uint256 public idoAmount;
     // IDO 500MNT per address
@@ -57,28 +59,42 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
     uint256 public claimOverTime;
     // 79% tken b for user claim
     uint256 public rewardPerSecond;
+    // how many address join ido
+    //feature 1
+    uint256 public idoAddressAmountTotal;
+    // merkle root for meme creater and voter
+    bytes32 public merkleRoot;
+
+    //merkle claim amount
+    uint256 public merkleClaimAmount;
+    // merkle claimed
+    mapping(address => bool) public merkleClaimed;
 
     // IDO
     mapping(address => uint256) public idoAddressAmount;
     // Claim last time
     mapping(address => uint256) public lastClaimTime;
 
+    //feature2
+    //user claimed amount
+    mapping(address => uint256) public userClaimAmount;
+
+    // idoamount < idominamount user withdraw
+    mapping(address => bool) public userWithdrawed;
+
+    mapping(address => bool) public Admins;
+
     //claim amount
     uint256 public claimedAmount;
 
-    // owner withdrawed
+    // owner withdraw fee
     bool public OwnerWithdrawed;
-
-    bool public isAddLiquidity;
-
+    // owner mint tokenb
     bool public isMintTokenB;
+    // owner update merkle root
+    bool public isUpdateMerkleRoot;
 
     ERC20TokenWrapped token;
-    address private constant FACTORY =
-        0x211b74591166485c73c473572220D7D01b2219Cb;
-    address private constant ROUTER =
-        0x44D7966fc0b9f4d521b83964f13Db9F48875d213;
-    address private constant WMNT = 0x78c1b0C915c4FAA5FffA6CAbf0219DA63d7f4cb8;
 
     using SafeERC20 for IERC20;
 
@@ -88,9 +104,19 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
     event Received(address sender, uint256 amount);
     event TokenCreate(address token, uint256 amount);
     event TokenMint(address to, uint256 amount);
+    event WithdrawLiquidity(address to, uint256 amount);
+    event MerkleRootUpdated(bytes32 merkleRoot);
+    event MerkleClaimed(address indexed user, uint256 amount);
 
     modifier onlyValidAddress(address addr) {
         require(addr != address(0), "Illegal address");
+        _;
+    }
+    modifier onlyAdmin() {
+        require(
+            Admins[_msgSender()] == true,
+            "Token Distributor::onlySendUser: Not SendUser"
+        );
         _;
     }
 
@@ -105,20 +131,22 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
      
      */
 
-    //constructor中定义上面的public变量，自动生成代码
     constructor(
         address _idoTokenA,
         uint256 _idoTokenAPrice,
-        uint256 _idoTokenAAmount,
+        uint256 _idoTokenAMaxAmount,
         uint256 _idoMaxAmountPerAddress,
+        uint256 _idoTokenAMinAmount,
         string memory _tokenName,
         string memory _tokenSymbol,
         uint256 _idoStartTime,
-        uint256 _idoEndTime
-    ) Ownable(msg.sender) {
+        uint256 _idoEndTime,
+        address factoryOwner
+    ) Ownable(_msgSender()) {
         idoTokenA = _idoTokenA;
         idoTokenAPrice = _idoTokenAPrice;
-        idoTokenAAmount = _idoTokenAAmount;
+        idoTokenAMaxAmount = _idoTokenAMaxAmount;
+        idoTokenAMinAmount = _idoTokenAMinAmount;
         idoMaxAmountPerAddress = _idoMaxAmountPerAddress;
         tokenName = _tokenName;
         tokenSymbol = _tokenSymbol;
@@ -130,6 +158,8 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         tokenFeeRate = 10;
         claimEndTime = idoEndTime + 6 days;
         claimOverTime = idoEndTime + 30 days;
+        Admins[_msgSender()] = true;
+        Admins[factoryOwner] = true;
     }
 
     /**
@@ -140,10 +170,11 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
             idoAddressAmount[_msgSender()] + amount <= idoMaxAmountPerAddress,
             "Exceeds the max amount per address"
         );
-        require(idoAmount + amount <= idoTokenAAmount, "IDO amount is full");
+        require(idoAmount + amount <= idoTokenAMaxAmount, "IDO amount is full");
 
         idoAddressAmount[_msgSender()] += amount;
         idoAmount += amount;
+        idoAddressAmountTotal += 1;
 
         emit Deposit(_msgSender(), amount);
     }
@@ -161,7 +192,7 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
             block.timestamp >= idoEndTime,
             "Claim time must be after ido end time"
         );
-        require(idoAmount != idoTokenAAmount, "ido not full,failed");
+        require(idoAmount < idoTokenAMinAmount, "ido not full,failed");
 
         uint256 amount = idoAddressAmount[_msgSender()];
         require(amount > 0, "No deposit amount");
@@ -169,17 +200,18 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         idoAmount -= amount;
         (bool success, ) = payable(_msgSender()).call{value: amount}("");
         require(success, "Native Token Transfer Failed");
+        userWithdrawed[_msgSender()] = true;
         emit Withdraw(address(0), amount);
     }
 
     // idoendtime mint token B
-    function mintTokenB() public onlyOwner {
+    function mintTokenB() public onlyAdmin {
         require(
             block.timestamp >= idoEndTime,
             "Claim time must be after ido end time"
         );
         require(tokenCap == 0, "Token B has been minted");
-        require(idoAmount == idoTokenAAmount, "IDO amount is not full");
+        require(idoAmount >= idoTokenAMinAmount, "IDO amount is not enough");
 
         tokenCap = idoAmount * idoTokenAPrice;
         rewardPerSecond =
@@ -209,55 +241,61 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         isMintTokenB = true;
     }
 
-    // add liquidity
-
-    function addLiquidity() public onlyOwner {
-        require(!isAddLiquidity, "");
-        safeApprove(tokenB, ROUTER, tokenDexAmount);
-        uint256 mntAmount = idoAmount - tokenFeeAmountMNT;
-        IUniswapV2Router(ROUTER).addLiquidityETH{value: mntAmount}(
-            tokenBAddress,
-            tokenDexAmount,
-            1, // slippage is unavoidable
-            1, // slippage is unavoidable
-            owner(),
-            block.timestamp
-        );
-
-        isAddLiquidity = true;
-    }
-
-    function removeLiquidity() public onlyOwner {
-        require(isAddLiquidity, "");
-        address pair = IUniswapV2Factory(FACTORY).getPair(WMNT, tokenBAddress);
-
-        uint256 liquidity = IERC20(pair).balanceOf(address(this));
-        safeApprove(IERC20(pair), ROUTER, liquidity);
-        IUniswapV2Router(ROUTER).removeLiquidityETH(
-            tokenBAddress,
-            liquidity,
-            1, // slippage is unavoidable
-            1, // slippage is unavoidable
-            owner(),
-            block.timestamp
-        );
-
-        isAddLiquidity = false;
-    }
-
-    function safeApprove(
-        IERC20 _token,
-        address spender,
+    function updateMerkleRoot(
+        bytes32 _merkleRoot,
         uint256 amount
-    ) internal {
-        (bool success, bytes memory returnData) = address(_token).call(
-            abi.encodeCall(IERC20.approve, (spender, amount))
-        );
+    ) public onlyAdmin {
+        require(isMintTokenB, "Token B has not been minted");
         require(
-            success &&
-                (returnData.length == 0 || abi.decode(returnData, (bool))),
-            "Approve fail"
+            amount == tokenRewardCreaterAmount,
+            "Merkle root Amount : Invalid amount"
         );
+        require(!isUpdateMerkleRoot, "Merkle Root has been updated");
+        merkleRoot = _merkleRoot;
+        isUpdateMerkleRoot = true;
+        emit MerkleRootUpdated(_merkleRoot);
+    }
+
+    // amount need decimals
+    function merkleClaim(
+        bytes32[] calldata proof,
+        uint256 amount
+    ) external whenNotPaused nonReentrant {
+        require(isUpdateMerkleRoot, "Merkle Root has not been updated");
+        require(
+            merkleClaimAmount + amount <= tokenRewardCreaterAmount,
+            "Merkle Claim: Invalid amount"
+        );
+
+        require(!merkleClaimed[_msgSender()], "Merkle Claim: Already claimed");
+
+        // (1）
+        bytes32 leaf = keccak256(
+            bytes.concat(keccak256(abi.encode(_msgSender(), amount)))
+        );
+        // (2)
+        require(MerkleProof.verify(proof, merkleRoot, leaf), "Invalid proof");
+
+        require(
+            tokenB.transfer(_msgSender(), amount),
+            "TokenAirdrop: Transfer failed"
+        );
+        merkleClaimAmount += amount;
+        merkleClaimed[_msgSender()] = true;
+
+        emit MerkleClaimed(_msgSender(), amount);
+    }
+
+    function withdrawLiquidity() public onlyAdmin {
+        require(isMintTokenB, "Token B has not been minted");
+        //99% MNT
+        uint256 mntAmount = idoAmount - tokenFeeAmountMNT;
+        require(mntAmount > 0, "No MNT to withdraw");
+        (bool success, ) = payable(_msgSender()).call{value: mntAmount}("");
+        require(success, "Native Token Transfer Failed");
+        // 19% tokenB
+        tokenB.transfer(_msgSender(), tokenDexAmount);
+        emit WithdrawLiquidity(_msgSender(), mntAmount);
     }
 
     /**
@@ -283,10 +321,11 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
             _start = idoEndTime;
         }
         uint256 amount = (_now - _start) * rewardPerSecond;
-        IERC20(tokenBAddress).transfer(_msgSender(), amount);
+        tokenB.transfer(_msgSender(), amount);
         emit Claimed(_msgSender(), amount);
 
         lastClaimTime[_msgSender()] = block.timestamp;
+        userClaimAmount[_msgSender()] += amount;
         claimedAmount += amount;
     }
 
@@ -295,22 +334,23 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
      * 1% MNT +1%的tokenB 给平台， 1%的tokenB给MEME创建者
      *
      */
-    function withdrawFee() public onlyOwner {
+    function withdrawFee(address _to) public onlyAdmin {
         require(!OwnerWithdrawed, "Owner has withdrawed");
         require(
             block.timestamp >= idoEndTime,
             "Claim time must be after ido end time"
         );
+        require(isMintTokenB, "Token B has not been minted");
         // for platform  1% tokenB + 1% MNT
 
-        IERC20(tokenBAddress).transfer(owner(), tokenFeeAmount);
+        tokenB.transfer(_to, tokenFeeAmount);
 
-        (bool success, ) = payable(owner()).call{value: tokenFeeAmountMNT}("");
+        (bool success, ) = payable(_to).call{value: tokenFeeAmountMNT}("");
         require(success, "Native Token Transfer Failed");
         emit Withdraw(address(0), tokenFeeAmountMNT);
 
-        // for meme creator
-        IERC20(tokenBAddress).transfer(owner(), tokenRewardCreaterAmount);
+        // // for meme creator
+        // IERC20(tokenBAddress).transfer(owner(), tokenRewardCreaterAmount);
 
         OwnerWithdrawed = true;
     }
@@ -319,13 +359,13 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
      * @dev Withdraw token After claimOverTime.
      *
      */
-    function withdrawERC20(address _token) public onlyOwner {
+    function withdrawERC20(address _token, address _to) public onlyAdmin {
         require(
             block.timestamp >= claimOverTime,
             "Claim time must be after ido end time"
         );
         uint256 amount = IERC20(_token).balanceOf(address(this));
-        IERC20(_token).safeTransfer(owner(), amount);
+        IERC20(_token).safeTransfer(_to, amount);
         emit Withdraw(_token, amount);
     }
 
@@ -334,7 +374,7 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
      *
      */
 
-    function withdrawMNTAfterOverTime() public onlyOwner {
+    function withdrawMNTAfterOverTime(address _to) public onlyAdmin {
         require(
             block.timestamp >= claimOverTime,
             "Claim time must be after ido end time"
@@ -343,7 +383,7 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         uint256 balance = address(this).balance;
         require(balance > 0, "No native token to withdraw");
         // Use call method for safer Ether transfer
-        (bool success, ) = payable(owner()).call{value: balance}("");
+        (bool success, ) = payable(_to).call{value: balance}("");
         require(success, "Withdrawable: Native Token transfer failed");
         emit Withdraw(address(0), balance);
     }
@@ -351,7 +391,7 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
     /**
      * @dev Pauses the contract.
      */
-    function pause() public onlyOwner {
+    function pause() public onlyAdmin {
         _pause();
         emit Paused(_msgSender());
     }
@@ -359,7 +399,7 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
     /**
      * @dev Unpauses the contract.
      */
-    function unpause() public onlyOwner {
+    function unpause() public onlyAdmin {
         _unpause();
         emit Unpaused(_msgSender());
     }

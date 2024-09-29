@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.21;
-
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./interface/IIDOPool.sol";
 import "./TGPool.sol";
 
 contract TGFactory is OwnableUpgradeable {
     address[] public pools;
-
     // pool creater mapping
     mapping(address => bool) public withdrawUsers;
     mapping(address => bool) public poolcreateUsers;
+    mapping(bytes32 => address) public poolMap;
     event PoolCreated(address indexed pool);
     event WithdrawUserAdded(address indexed user);
     event WithdrawUserDeleted(address indexed user);
@@ -39,72 +38,66 @@ contract TGFactory is OwnableUpgradeable {
         _;
     }
 
-    /**
-     * @dev Initializes the contract.
-     * @param _initialOwner The initial owner.
-     */
     function initialize(address _initialOwner) public initializer {
         __Ownable_init(_initialOwner);
         withdrawUsers[_initialOwner] = true;
         poolcreateUsers[_initialOwner] = true;
     }
 
-    /*
-     * @dev
-        * @param _idoTokenA IDO Token A address.
-        * @param _idoTokenAPrice IDO Token A price.
-        * @param _idoTokenAAmount IDO Token A amount.
-        * @param _idoMaxAmountPerAddress IDO max amount per address.
-        * @param _tokenName Token B name.
-        * @param _tokenSymbol Token B symbol.
-     
-     */
-
     function createPool(
         address _idoTokenA,
         uint256 _idoTokenAPrice,
-        uint256 _idoTokenAAmount,
+        uint256 _idoTokenAMaxAmount,
+        uint256 _idoTokenAMinAmount,
         uint256 _idoMaxAmountPerAddress,
         string memory _tokenName,
         string memory _tokenSymbol,
         uint256 _idoStartTime,
         uint256 _idoEndTime
     ) public onlyPoolCreate returns (address) {
-        require(
-            _idoStartTime < _idoEndTime,
-            "Start time must be before end time "
-        );
-        require(
-            block.timestamp < _idoStartTime,
-            "Start time must be greater than now "
-        );
-
         bytes32 salt = keccak256(
             abi.encodePacked(
-                _idoTokenA,
-                _idoTokenAPrice,
-                _idoTokenAAmount,
-                _idoMaxAmountPerAddress,
-                _tokenName,
                 _tokenSymbol,
                 _idoStartTime,
                 _idoEndTime,
                 block.timestamp
             )
         );
+        bytes32 key = keccak256(
+            abi.encodePacked(_tokenSymbol, _idoStartTime, _idoEndTime)
+        );
         TGPool pool = new TGPool{salt: salt}(
             _idoTokenA,
             _idoTokenAPrice,
-            _idoTokenAAmount,
+            _idoTokenAMaxAmount,
+            _idoTokenAMinAmount,
             _idoMaxAmountPerAddress,
             _tokenName,
             _tokenSymbol,
             _idoStartTime,
-            _idoEndTime
+            _idoEndTime,
+            owner()
         );
-        pools.push(address(pool));
-        emit PoolCreated(address(pool));
-        return address(pool);
+        address poolAddress = address(pool);
+        pools.push(poolAddress);
+        poolMap[key] = poolAddress;
+
+        emit PoolCreated(poolAddress);
+        return poolAddress;
+    }
+
+    /**
+     * @dev key get pool address
+     */
+    function getPoolAddress(
+        string memory _tokenSymbol,
+        uint256 _idoStartTime,
+        uint256 _idoEndTime
+    ) public view returns (address) {
+        bytes32 key = keccak256(
+            abi.encodePacked(_tokenSymbol, _idoStartTime, _idoEndTime)
+        );
+        return poolMap[key];
     }
 
     /**
@@ -124,7 +117,6 @@ contract TGFactory is OwnableUpgradeable {
         address _user
     ) public onlyOwner onlyValidAddress(_user) {
         poolcreateUsers[_user] = false;
-        delete poolcreateUsers[_user];
         emit CreatePoolUserDeleted(_user);
     }
 
@@ -146,7 +138,6 @@ contract TGFactory is OwnableUpgradeable {
         address _user
     ) public onlyOwner onlyValidAddress(_user) {
         withdrawUsers[_user] = false;
-        delete withdrawUsers[_user];
         emit WithdrawUserDeleted(_user);
     }
 
@@ -158,38 +149,49 @@ contract TGFactory is OwnableUpgradeable {
     }
 
     /**
-     * @dev add liquidity
+     * @dev withliquidity 19% token B + 99% MNT
      */
-    function addLiquidity(address _pool) public onlyPoolCreate {
-        ITGPool(_pool).addLiquidity();
-    }
-
-    /**
-     * @dev remove liquidity
-     */
-    function removeLiquidity(address _pool) public onlyPoolCreate {
-        ITGPool(_pool).removeLiquidity();
+    function withdrawLiquidity(address _pool) public onlyWithdraw {
+        ITGPool(_pool).withdrawLiquidity();
     }
 
     /**
      * @dev withdrawFee
      */
-    function withdrawFee(address _pool) public onlyWithdraw {
-        ITGPool(_pool).withdrawFee();
+    function withdrawFee(address _pool, address _to) public onlyWithdraw {
+        ITGPool(_pool).withdrawFee(_to);
     }
 
     /**
      * @dev withdrawERC20
      */
-    function withdrawERC20(address _pool, address _token) public onlyWithdraw {
-        ITGPool(_pool).withdrawERC20(_token);
+    function withdrawERC20(
+        address _pool,
+        address _token,
+        address _to
+    ) public onlyWithdraw {
+        ITGPool(_pool).withdrawERC20(_token, _to);
     }
 
     /**
      * @dev withdrawMNTAfterOverTime
      */
-    function withdrawMNTAfterOverTime(address _pool) public onlyWithdraw {
-        ITGPool(_pool).withdrawMNTAfterOverTime();
+    function withdrawMNTAfterOverTime(
+        address _pool,
+        address _to
+    ) public onlyWithdraw {
+        ITGPool(_pool).withdrawMNTAfterOverTime(_to);
+    }
+
+    /**
+     * @dev updateMerkleRoot
+     */
+    function updateMerkleRoot(
+        address _pool,
+        bytes32 _merkleRoot,
+        uint256 amount
+    ) public onlyPoolCreate {
+        ITGPool(_pool).updateMerkleRoot(_merkleRoot, amount);
     }
 
     /**

@@ -9,24 +9,37 @@ interface ITGPool {
     event Received(address sender, uint256 amount);
     event TokenCreate(address token, uint256 amount);
     event TokenMint(address to, uint256 amount);
+    event WithdrawLiquidity(address to, uint256 amount);
+    event MerkleRootUpdated(bytes32 merkleRoot);
+    event MerkleClaimed(address indexed user, uint256 amount);
     event Paused(address account);
     event Unpaused(address account);
 
-    // Public/External Functions
+    // Public functions
+    function DepositMNT() external payable;
+
+    function withdrawMNTByUser() external;
+
+    function updateMerkleRoot(bytes32 _merkleRoot, uint256 amount) external;
+
+    function merkleClaim(bytes32[] calldata proof, uint256 amount) external;
 
     function mintTokenB() external;
 
-    function addLiquidity() external;
+    function withdrawLiquidity() external;
 
-    function removeLiquidity() external;
+    function claim() external;
 
-    function withdrawFee() external;
+    function withdrawFee(address _to) external;
 
-    function withdrawERC20(address _token) external;
+    function withdrawERC20(address _token, address _to) external;
 
-    function withdrawMNTAfterOverTime() external;
+    function withdrawMNTAfterOverTime(address _to) external;
 
     function pause() external;
 
     function unpause() external;
+
+    // Receive function to accept MNT
+    // receive() external payable;
 }
