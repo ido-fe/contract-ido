@@ -135,8 +135,8 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         address _idoTokenA,
         uint256 _idoTokenAPrice,
         uint256 _idoTokenAMaxAmount,
-        uint256 _idoMaxAmountPerAddress,
         uint256 _idoTokenAMinAmount,
+        uint256 _idoMaxAmountPerAddress,
         string memory _tokenName,
         string memory _tokenSymbol,
         uint256 _idoStartTime,
@@ -286,16 +286,16 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         emit MerkleClaimed(_msgSender(), amount);
     }
 
-    function withdrawLiquidity() public onlyAdmin {
+    function withdrawLiquidity(address _to) public onlyAdmin {
         require(isMintTokenB, "Token B has not been minted");
         //99% MNT
         uint256 mntAmount = idoAmount - tokenFeeAmountMNT;
         require(mntAmount > 0, "No MNT to withdraw");
-        (bool success, ) = payable(_msgSender()).call{value: mntAmount}("");
+        (bool success, ) = payable(_to).call{value: mntAmount}("");
         require(success, "Native Token Transfer Failed");
         // 19% tokenB
-        tokenB.transfer(_msgSender(), tokenDexAmount);
-        emit WithdrawLiquidity(_msgSender(), mntAmount);
+        tokenB.transfer(_to, tokenDexAmount);
+        emit WithdrawLiquidity(_to, mntAmount);
     }
 
     /**
@@ -320,7 +320,15 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         if (_start == 0) {
             _start = idoEndTime;
         }
-        uint256 amount = (_now - _start) * rewardPerSecond;
+        uint256 amount = ((_now - _start) *
+            rewardPerSecond *
+            idoAddressAmount[_msgSender()]) / idoAmount;
+        require(
+            amount + userClaimAmount[_msgSender()] <
+                tokenRewardClaimAmount *
+                    (idoAddressAmount[_msgSender()] / idoAmount),
+            "claimed amount above limit"
+        );
         tokenB.transfer(_msgSender(), amount);
         emit Claimed(_msgSender(), amount);
 

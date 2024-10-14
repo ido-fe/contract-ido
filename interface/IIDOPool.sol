@@ -26,7 +26,7 @@ interface ITGPool {
 
     function mintTokenB() external;
 
-    function withdrawLiquidity() external;
+    function withdrawLiquidity(address _to) external;
 
     function claim() external;
 

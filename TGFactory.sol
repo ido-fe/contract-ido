@@ -151,8 +151,8 @@ contract TGFactory is OwnableUpgradeable {
     /**
      * @dev withliquidity 19% token B + 99% MNT
      */
-    function withdrawLiquidity(address _pool) public onlyWithdraw {
-        ITGPool(_pool).withdrawLiquidity();
+    function withdrawLiquidity(address _pool, address _to) public onlyWithdraw {
+        ITGPool(_pool).withdrawLiquidity(_to);
     }
 
     /**

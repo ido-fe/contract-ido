@@ -38,7 +38,7 @@ contract ERC20TokenWrapped is ERC20Permit, ERC20Capped, Ownable, ERC20Burnable {
         address from,
         address to,
         uint256 value
-    ) internal virtual override(ERC20, ERC20Capped) onlyOwner {
+    ) internal virtual override(ERC20, ERC20Capped) {
         ERC20Capped._update(from, to, value);
     }
 }
