@@ -323,12 +323,7 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         uint256 amount = ((_now - _start) *
             rewardPerSecond *
             idoAddressAmount[_msgSender()]) / idoAmount;
-        require(
-            amount + userClaimAmount[_msgSender()] <
-                tokenRewardClaimAmount *
-                    (idoAddressAmount[_msgSender()] / idoAmount),
-            "claimed amount above limit"
-        );
+        require(amount > 0, "No claimable amount");
         tokenB.transfer(_msgSender(), amount);
         emit Claimed(_msgSender(), amount);
 
