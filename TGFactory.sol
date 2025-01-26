@@ -53,7 +53,13 @@ contract TGFactory is OwnableUpgradeable {
         string memory _tokenName,
         string memory _tokenSymbol,
         uint256 _idoStartTime,
-        uint256 _idoEndTime
+        uint256 _idoEndTime,
+        uint256 _claimEndDays,
+        uint256 _claimOverDays,
+        uint256 _tokenRewardClaimRate,
+        uint256 _tokenRewardCreaterRate,
+        uint256 _tokenDexRate,
+        uint256 _tokenFeeRate
     ) public onlyPoolCreate returns (address) {
         bytes32 salt = keccak256(
             abi.encodePacked(
@@ -76,6 +82,12 @@ contract TGFactory is OwnableUpgradeable {
             _tokenSymbol,
             _idoStartTime,
             _idoEndTime,
+            _claimEndDays,
+            _claimOverDays,
+            _tokenRewardClaimRate,
+            _tokenRewardCreaterRate,
+            _tokenDexRate,
+            _tokenFeeRate,
             owner()
         );
         address poolAddress = address(pool);

@@ -53,12 +53,20 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
     uint256 public idoStartTime;
     // IDO endtime = Claim start time
     uint256 public idoEndTime;
+
     // claim 6days
-    uint256 public claimEndTime;
+    uint256 public claimEndDays;
     // claim over 30 days ,user can't claim
+    uint256 public claimOverDays;
+
+    // idoEndTime + claimEndDays
+    uint256 public claimEndTime;
+    // claimEndTime + claimOverDays
     uint256 public claimOverTime;
+
     // 79% tken b for user claim
     uint256 public rewardPerSecond;
+
     // how many address join ido
     //feature 1
     uint256 public idoAddressAmountTotal;
@@ -141,6 +149,12 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         string memory _tokenSymbol,
         uint256 _idoStartTime,
         uint256 _idoEndTime,
+        uint256 _claimEndDays,
+        uint256 _claimOverDays,
+        uint256 _tokenRewardClaimRate,
+        uint256 _tokenRewardCreaterRate,
+        uint256 _tokenDexRate,
+        uint256 _tokenFeeRate,
         address factoryOwner
     ) Ownable(_msgSender()) {
         idoTokenA = _idoTokenA;
@@ -152,12 +166,23 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         tokenSymbol = _tokenSymbol;
         idoStartTime = _idoStartTime;
         idoEndTime = _idoEndTime;
-        tokenRewardClaimRate = 790;
-        tokenRewardCreaterRate = 10;
-        tokenDexRate = 190;
-        tokenFeeRate = 10;
-        claimEndTime = idoEndTime + 6 days;
-        claimOverTime = idoEndTime + 30 days;
+        // require(
+        //     _tokenRewardClaimRate + _tokenRewardCreaterRate + _tokenDexRate ==
+        //         1000,
+        //     "rate total need be 1000"
+        // );
+        // for user claim 48%  480
+        tokenRewardClaimRate = _tokenRewardClaimRate;
+        // for memecreater 2% 20
+        tokenRewardCreaterRate = _tokenRewardCreaterRate;
+        // for dex 50% 500
+        tokenDexRate = _tokenDexRate;
+        // for platform fee 0% 0
+        tokenFeeRate = _tokenFeeRate;
+        // 20250115
+        claimEndTime = idoEndTime + _claimEndDays;
+        claimOverTime = idoEndTime + _claimOverDays;
+
         Admins[_msgSender()] = true;
         Admins[factoryOwner] = true;
     }
@@ -207,11 +232,10 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
     // idoendtime mint token B
     function mintTokenB() public onlyAdmin {
         require(
-            block.timestamp >= idoEndTime,
-            "Claim time must be after ido end time"
+            block.timestamp > idoEndTime || idoAmount >= idoTokenAMinAmount,
+            "IDO amount not enough or claim time not reached"
         );
         require(tokenCap == 0, "Token B has been minted");
-        require(idoAmount >= idoTokenAMinAmount, "IDO amount is not enough");
 
         tokenCap = idoAmount * idoTokenAPrice;
         rewardPerSecond =
@@ -230,10 +254,13 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         tokenB = IToken(tokenBAddress);
         tokenB.mint(address(this), tokenCap);
         emit TokenMint(address(this), tokenCap);
-
+        // for user claim 48%
         tokenRewardClaimAmount = (tokenCap * tokenRewardClaimRate) / 1000;
+        // for meme creater 2%
         tokenRewardCreaterAmount = (tokenCap * tokenRewardCreaterRate) / 1000;
+        // for dex 50%
         tokenDexAmount = (tokenCap * tokenDexRate) / 1000;
+
         tokenFeeAmount = (tokenCap * tokenFeeRate) / 1000;
         tokenFeeAmountMNT = (idoAmount * tokenFeeRate) / 1000;
 
@@ -288,12 +315,12 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
 
     function withdrawLiquidity(address _to) public onlyAdmin {
         require(isMintTokenB, "Token B has not been minted");
-        //99% MNT
+        //100% MNT
         uint256 mntAmount = idoAmount - tokenFeeAmountMNT;
         require(mntAmount > 0, "No MNT to withdraw");
         (bool success, ) = payable(_to).call{value: mntAmount}("");
         require(success, "Native Token Transfer Failed");
-        // 19% tokenB
+        // 50% tokenB
         tokenB.transfer(_to, tokenDexAmount);
         emit WithdrawLiquidity(_to, mntAmount);
     }
@@ -345,9 +372,8 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
         );
         require(isMintTokenB, "Token B has not been minted");
         // for platform  1% tokenB + 1% MNT
-
+        require(tokenFeeAmount > 0, "fee is 0,can't withdraw");
         tokenB.transfer(_to, tokenFeeAmount);
-
         (bool success, ) = payable(_to).call{value: tokenFeeAmountMNT}("");
         require(success, "Native Token Transfer Failed");
         emit Withdraw(address(0), tokenFeeAmountMNT);
