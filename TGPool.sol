@@ -266,6 +266,8 @@ contract TGPool is Ownable, Pausable, ReentrancyGuard {
 
         rewardPerSecond = tokenRewardClaimAmount / (claimEndTime - idoEndTime);
         isMintTokenB = true;
+
+        tokenB.renounceOwnership();
     }
 
     function updateMerkleRoot(
